@@ -77,7 +77,7 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
-uint8_t txBufUART[10], rxBufUART[12];
+uint8_t rxBufUART[12];
 uint8_t rxByteUART;
 uint16_t rxDataLength;
 
@@ -96,8 +96,6 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-//void UART_SendMessage(uint8_t txBufUART)
 
 float str2float(uint8_t *buf) {													// String Parser
 	float result = 0;
@@ -133,7 +131,7 @@ void G28_Handler(void) {														// Move to Origin
 
 void G1_Handler(void) {															// Move Z
 	float z = str2float(rxBufUART);
-	if ((z * STEPS_PER_MM) <= ZMAX_MM) {
+	if ((z * STEPS_PER_MM) <= (ZMAX_MM * STEPS_PER_MM)) {
 		HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G1\r\n", 7, 100);
 	}
 	else
