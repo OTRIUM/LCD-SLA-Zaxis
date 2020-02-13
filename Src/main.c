@@ -81,6 +81,7 @@ uint16_t rxDataLength;
 
 int32_t currStep, stepsToMove;
 uint8_t isHomeSet, isMotorStarted, isMovingUpHome;
+int8_t dir;
 
 /* USER CODE END PV */
 
@@ -131,19 +132,24 @@ void G28_Handler(void) {														// Move to Origin
 		HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G28\r\n", 8, 100);
 		if (!HAL_GPIO_ReadPin(GPIOA, ENDSTOP_IN_Pin)) {
 			__DRV_DIR_UP;
-			stepsToMove = 50 * STEPS_PER_MM;
+			dir = 1;
+			stepsToMove = 15 * STEPS_PER_MM;
 			isMovingUpHome = 1;
 			isMotorStarted = 1;
 			__MOTOR_START;
-		} else {
+		}
+		else {
 			__DRV_DIR_DOWN;
+			dir = -1;
 			stepsToMove = 150 * STEPS_PER_MM;
 			isMotorStarted = 1;
 			__MOTOR_START;
 		}
-	} else {
+	}
+	else {
 		__DRV_DIR_DOWN;
-		stepsToMove = 150 * STEPS_PER_MM;
+		dir = -1;
+		stepsToMove = 50 * STEPS_PER_MM;
 		isMovingUpHome = 0;
 		isMotorStarted = 1;
 		__MOTOR_START;
@@ -151,12 +157,32 @@ void G28_Handler(void) {														// Move to Origin
 }
 
 void G1_Handler(void) {															// Move Z
-	float z = str2float(rxBufUART);
-	if ((z * STEPS_PER_MM) <= (ZMAX_MM * STEPS_PER_MM)) {
-		HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G1\r\n", 7, 100);
+	if (isHomeSet) {
+		float z = str2float(rxBufUART);
+		uint32_t zInSteps = (z * STEPS_PER_MM);
+		if (zInSteps <= (ZMAX_MM * STEPS_PER_MM)) {
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G1\r\n", 7, 100);
+			if (zInSteps > currStep) {
+				__DRV_DIR_UP;
+				dir = 1;
+				stepsToMove = zInSteps - currStep;
+				isMotorStarted = 1;
+				__MOTOR_START;
+			}
+			else if (zInSteps < currStep) {
+				__DRV_DIR_DOWN;
+				dir = -1;
+				stepsToMove = currStep - zInSteps;
+				isMotorStarted = 1;
+				__MOTOR_START;
+			}
+		}
+		else
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"RNG ERR\r\n", 9, 100);
 	}
 	else
-		HAL_UART_Transmit(&huart1, (uint8_t*)&"RNG ERR\r\n", 9, 100);
+		HAL_UART_Transmit(&huart1, (uint8_t*)&"HOME ERR\r\n", 10, 100);
+
 }
 
 void UART_RxMessageHandler(void) {
@@ -208,6 +234,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 }
 
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim) {				// TIM16 Callback
+	if (dir > 0)
+		currStep++;
+	else if (dir < 0)
+		currStep--;
+
 	if (stepsToMove > 1) {
 		stepsToMove--;
 	}
