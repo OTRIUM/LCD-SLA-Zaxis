@@ -27,6 +27,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#define ZMAX_MM 			115
+#define STEPS_PER_MM		80
+
 #define __LED_ON          	HAL_GPIO_WritePin(GPIOA, LED_Pin, GPIO_PIN_RESET)
 #define __LED_OFF           HAL_GPIO_WritePin(GPIOA, LED_Pin, GPIO_PIN_SET)
 #define __DRV_EN_ON       	HAL_GPIO_WritePin(GPIOA, DRV_EN_Pin, GPIO_PIN_RESET)
@@ -38,6 +41,7 @@
 
 #define __MOTOR_START		HAL_TIM_PWM_Start_IT(&htim16, TIM_CHANNEL_1)
 #define __MOTOR_STOP		HAL_TIM_PWM_Stop_IT(&htim16, TIM_CHANNEL_1)
+
 
 /*
 NEMA17 		1.8 deg / step
@@ -73,8 +77,11 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
-uint8_t txBufUART[10], rxBufUART[10];
-uint8_t rxByteUART, rxDataLength;
+uint8_t txBufUART[10], rxBufUART[12];
+uint8_t rxByteUART;
+uint16_t rxDataLength;
+
+uint32_t stepsToMove = 0;
 
 /* USER CODE END PV */
 
@@ -89,18 +96,23 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-float str2float(uint8_t *buf) {
+
+//void UART_SendMessage(uint8_t txBufUART)
+
+float str2float(uint8_t *buf) {													// String Parser
 	float result = 0;
 	uint32_t digit = 1, divRatio = 1;
-	for (uint8_t i=(rxDataLength-1); i>3; i--) {
-		if ((buf[i] == 0x2E) && (divRatio == 1))
+	for (uint8_t i=(rxDataLength-1); i>3; i--) {								// From last to first digit
+		if ((buf[i] == 0x2E) && (divRatio == 1))								// 0x2E == '.'
 			divRatio = digit;
-		else if ((buf[i] >= 0x30) && (buf[i] <= 0x39)) {
+		else if ((buf[i] >= 0x30) && (buf[i] <= 0x39)) {						// 0x30 = '0', 0x39 = '9'
 			result += (buf[i] - 0x30) * digit;
 			digit *= 10;
 		}
 		else {
 			HAL_UART_Transmit(&huart1, (uint8_t*)&"PARSE ERR\r\n", 11, 100);
+			result = 1000;
+			divRatio = 1;
 			break;
 		}
 	}
@@ -119,9 +131,13 @@ void G28_Handler(void) {														// Move to Origin
 	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G28\r\n", 8, 100);
 }
 
-void G1_Handler(void) {															// Move
+void G1_Handler(void) {															// Move Z
 	float z = str2float(rxBufUART);
-	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G1\r\n", 7, 100);
+	if ((z * STEPS_PER_MM) <= ZMAX_MM) {
+		HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G1\r\n", 7, 100);
+	}
+	else
+		HAL_UART_Transmit(&huart1, (uint8_t*)&"RNG ERR\r\n", 9, 100);
 }
 
 void UART_RxMessageHandler(void) {
@@ -140,13 +156,13 @@ void UART_RxMessageHandler(void) {
 		else HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG ERR\r\n", 9, 100);
 	}
 
-	for (uint8_t i=0; i<10; i++)
+	for (uint8_t i=0; i<12; i++)
 		rxBufUART[i] = 0;
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if ((rxByteUART != '\r') && (rxByteUART != '\n')) {
-		if (rxDataLength < 9) {
+		if (rxDataLength < 12) {
 			rxBufUART[rxDataLength] = rxByteUART;
 			rxDataLength++;
 		}
@@ -157,12 +173,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
 	}
 	else if (rxByteUART == '\r') {
-		rxDataLength *= 10;
+		rxDataLength *= 100;
 		HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
 	}
 	else if (rxByteUART == '\n') {
-		if (rxDataLength >= 10) {
-			rxDataLength /= 10;
+		if (rxDataLength >= 100) {
+			rxDataLength /= 100;
 			UART_RxMessageHandler();
 		}
 		else
@@ -233,43 +249,45 @@ int main(void)
   */
 void SystemClock_Config(void)
 {
-  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
+  LL_FLASH_SetLatency(LL_FLASH_LATENCY_1);
 
-  /** Initializes the CPU, AHB and APB busses clocks 
-  */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL6;
-  RCC_OscInitStruct.PLL.PREDIV = RCC_PREDIV_DIV1;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  if(LL_FLASH_GetLatency() != LL_FLASH_LATENCY_1)
   {
-    Error_Handler();
+  Error_Handler();  
   }
-  /** Initializes the CPU, AHB and APB busses clocks 
-  */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  LL_RCC_HSE_Enable();
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+   /* Wait till HSE is ready */
+  while(LL_RCC_HSE_IsReady() != 1)
   {
-    Error_Handler();
+    
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1;
-  PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK1;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
+  LL_RCC_HSE_EnableCSS();
+  LL_RCC_PLL_ConfigDomain_SYS(LL_RCC_PLLSOURCE_HSE_DIV_1, LL_RCC_PLL_MUL_6);
+  LL_RCC_PLL_Enable();
+
+   /* Wait till PLL is ready */
+  while(LL_RCC_PLL_IsReady() != 1)
   {
-    Error_Handler();
+    
   }
-  /** Enables the Clock Security System 
-  */
-  HAL_RCC_EnableCSS();
+  LL_RCC_SetAHBPrescaler(LL_RCC_SYSCLK_DIV_1);
+  LL_RCC_SetAPB1Prescaler(LL_RCC_APB1_DIV_1);
+  LL_RCC_SetSysClkSource(LL_RCC_SYS_CLKSOURCE_PLL);
+
+   /* Wait till System clock is ready */
+  while(LL_RCC_GetSysClkSource() != LL_RCC_SYS_CLKSOURCE_STATUS_PLL)
+  {
+  
+  }
+  LL_SetSystemCoreClock(48000000);
+
+   /* Update the time base */
+  if (HAL_InitTick (TICK_INT_PRIORITY) != HAL_OK)
+  {
+    Error_Handler();  
+  };
+  LL_RCC_SetUSARTClockSource(LL_RCC_USART1_CLKSOURCE_PCLK1);
 }
 
 /**
