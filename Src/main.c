@@ -24,6 +24,32 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include <stdio.h>
+#include <string.h>
+
+#define __LED_ON          	HAL_GPIO_WritePin(GPIOA, LED_Pin, GPIO_PIN_RESET)
+#define __LED_OFF           HAL_GPIO_WritePin(GPIOA, LED_Pin, GPIO_PIN_SET)
+#define __DRV_EN_ON       	HAL_GPIO_WritePin(GPIOA, DRV_EN_Pin, GPIO_PIN_RESET)
+#define __DRV_EN_OFF        HAL_GPIO_WritePin(GPIOA, DRV_EN_Pin, GPIO_PIN_SET)
+#define __DRV_STEP_ON		HAL_GPIO_WritePin(GPIOA, DRV_STEP_Pin, GPIO_PIN_SET)
+#define __DRV_STEP_OFF      HAL_GPIO_WritePin(GPIOA, DRV_STEP_Pin, GPIO_PIN_RESET)
+#define __DRV_DIR_UP     	HAL_GPIO_WritePin(GPIOA, DRV_DIR_Pin, GPIO_PIN_SET)
+#define __DRV_DIR_DOWN      HAL_GPIO_WritePin(GPIOA, DRV_DIR_Pin, GPIO_PIN_RESET)
+
+#define __MOTOR_START		HAL_TIM_PWM_Start_IT(&htim16, TIM_CHANNEL_1)
+#define __MOTOR_STOP		HAL_TIM_PWM_Stop_IT(&htim16, TIM_CHANNEL_1)
+
+/*
+NEMA17 		1.8 deg / step
+TMC2208 	16 microsteps / step
+(360 / 1.8) * 16 = 3200 - number of pulses to make 1 revolution
+
+GT2-20T
+P = 40 mm
+3200 / 40 = 80 - number of pulses to move carriage 1 mm
+*/
+
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,6 +73,9 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
+uint8_t txBufUART[10], rxBufUART[10];
+uint8_t rxByteUART, rxDataLength;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -60,6 +89,65 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+void M17_Handler(void) {														// Enable Steppers
+	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK M17\r\n", 8, 100);
+}
+
+void M18_Handler(void) {														// Disable Steppers
+	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK M18\r\n", 8, 100);
+}
+
+void G28_Handler(void) {														// Move to Origin
+	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G28\r\n", 8, 100);
+}
+
+void G1_Handler(void) {
+	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G1\r\n", 7, 100);
+}
+
+void UART_RxMessageHandler(void) {
+	if (rxDataLength == 3) {
+		if (!strcmp("M17", (char*)&rxBufUART))
+			M17_Handler();
+		else if (!strcmp("M18", (char*)&rxBufUART))
+			M18_Handler();
+		else if (!strcmp("G28", (char*)&rxBufUART))
+			G28_Handler();
+		else HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG_ERR\r\n", 9, 100);
+	}
+
+	for (uint8_t i=0; i<10; i++)
+		rxBufUART[i] = 0;
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	if ((rxByteUART != '\r') && (rxByteUART != '\n')) {
+		if (rxDataLength < 10) {
+			rxBufUART[rxDataLength] = rxByteUART;
+			rxDataLength++;
+		}
+		else {
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG_ERR\r\n", 9, 100);
+			rxDataLength = 0;
+		}
+		HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
+	}
+	else if (rxByteUART == '\r') {
+		rxDataLength *= 10;
+		HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
+	}
+	else if (rxByteUART == '\n') {
+		if (rxDataLength >= 10) {
+			rxDataLength /= 10;
+			UART_RxMessageHandler();
+		}
+		else
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG_ERR\r\n", 9, 100);
+		rxDataLength = 0;
+		HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
+	}
+}
 
 /* USER CODE END 0 */
 
@@ -95,6 +183,11 @@ int main(void)
   MX_TIM16_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+
+  HAL_UART_Transmit(&huart1, (uint8_t*)&"HELLO BLYAD\r\n", 13, 100);
+
+  rxDataLength = 0;
+  HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
 
   /* USER CODE END 2 */
  
