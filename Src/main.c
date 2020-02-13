@@ -89,6 +89,23 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+float str2float(uint8_t *buf) {
+	float result = 0;
+	uint32_t digit = 1, divRatio = 1;
+	for (uint8_t i=(rxDataLength-1); i>3; i--) {
+		if ((buf[i] == 0x2E) && (divRatio == 1))
+			divRatio = digit;
+		else if ((buf[i] >= 0x30) && (buf[i] <= 0x39)) {
+			result += (buf[i] - 0x30) * digit;
+			digit *= 10;
+		}
+		else {
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"PARSE ERR\r\n", 11, 100);
+			break;
+		}
+	}
+	return (result / divRatio);
+}
 
 void M17_Handler(void) {														// Enable Steppers
 	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK M17\r\n", 8, 100);
@@ -102,7 +119,8 @@ void G28_Handler(void) {														// Move to Origin
 	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G28\r\n", 8, 100);
 }
 
-void G1_Handler(void) {
+void G1_Handler(void) {															// Move
+	float z = str2float(rxBufUART);
 	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G1\r\n", 7, 100);
 }
 
@@ -114,7 +132,12 @@ void UART_RxMessageHandler(void) {
 			M18_Handler();
 		else if (!strcmp("G28", (char*)&rxBufUART))
 			G28_Handler();
-		else HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG_ERR\r\n", 9, 100);
+		else HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG ERR\r\n", 9, 100);
+	}
+	else {
+		if (!strncmp("G1 Z", (char*)&rxBufUART, 4))
+			G1_Handler();
+		else HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG ERR\r\n", 9, 100);
 	}
 
 	for (uint8_t i=0; i<10; i++)
@@ -123,12 +146,12 @@ void UART_RxMessageHandler(void) {
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if ((rxByteUART != '\r') && (rxByteUART != '\n')) {
-		if (rxDataLength < 10) {
+		if (rxDataLength < 9) {
 			rxBufUART[rxDataLength] = rxByteUART;
 			rxDataLength++;
 		}
 		else {
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG_ERR\r\n", 9, 100);
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG ERR\r\n", 9, 100);
 			rxDataLength = 0;
 		}
 		HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
@@ -143,7 +166,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 			UART_RxMessageHandler();
 		}
 		else
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG_ERR\r\n", 9, 100);
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG ERR\r\n", 9, 100);
 		rxDataLength = 0;
 		HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
 	}
