@@ -124,27 +124,33 @@ void M17_Handler(void) {														// Enable Steppers
 
 void M18_Handler(void) {														// Disable Steppers
 	__DRV_EN_OFF;
+	isHomeSet = 0;
 	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK M18\r\n", 8, 100);
 }
 
 void G28_Handler(void) {														// Move to Origin
 	if (!isMovingUpHome) {
-		HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G28\r\n", 8, 100);
-		if (!HAL_GPIO_ReadPin(GPIOA, ENDSTOP_IN_Pin)) {
-			__DRV_DIR_UP;
-			dir = 1;
-			stepsToMove = 15 * STEPS_PER_MM;
-			isMovingUpHome = 1;
-			isMotorStarted = 1;
-			__MOTOR_START;
+		isHomeSet = 0;
+		if (!HAL_GPIO_ReadPin(GPIOA, DRV_EN_Pin)) {
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G28\r\n", 8, 100);
+			if (!HAL_GPIO_ReadPin(GPIOA, ENDSTOP_IN_Pin)) {
+				__DRV_DIR_UP;
+				dir = 1;
+				stepsToMove = 15 * STEPS_PER_MM;
+				isMovingUpHome = 1;
+				isMotorStarted = 1;
+				__MOTOR_START;
+			}
+			else {
+				__DRV_DIR_DOWN;
+				dir = -1;
+				stepsToMove = 150 * STEPS_PER_MM;
+				isMotorStarted = 1;
+				__MOTOR_START;
+			}
 		}
-		else {
-			__DRV_DIR_DOWN;
-			dir = -1;
-			stepsToMove = 150 * STEPS_PER_MM;
-			isMotorStarted = 1;
-			__MOTOR_START;
-		}
+		else
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"EN ERR\r\n", 8, 100);
 	}
 	else {
 		__DRV_DIR_DOWN;
@@ -161,7 +167,9 @@ void G1_Handler(void) {															// Move Z
 		float z = str2float(rxBufUART);
 		uint32_t zInSteps = (z * STEPS_PER_MM);
 		if (zInSteps <= (ZMAX_MM * STEPS_PER_MM)) {
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G1\r\n", 7, 100);
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"OK ", 3, 100);
+			HAL_UART_Transmit(&huart1, rxBufUART, rxDataLength, 100);
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"\r\n", 2, 100);
 			if (zInSteps > currStep) {
 				__DRV_DIR_UP;
 				dir = 1;
@@ -177,7 +185,7 @@ void G1_Handler(void) {															// Move Z
 				__MOTOR_START;
 			}
 		}
-		else
+		else if (z != 1000)
 			HAL_UART_Transmit(&huart1, (uint8_t*)&"RNG ERR\r\n", 9, 100);
 	}
 	else
@@ -245,6 +253,8 @@ void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim) {				// TIM16 Ca
 	else {
 		__MOTOR_STOP;
 		isMotorStarted = 0;
+		if (isHomeSet)
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"READY\r\n", 7, 100);
 		if (isMovingUpHome)
 			G28_Handler();
 	}
@@ -252,9 +262,13 @@ void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim) {				// TIM16 Ca
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {								// EXTI1 IRQ Callback (Z Endstop)
 	__MOTOR_STOP;
-	isHomeSet = 1;
 	isMotorStarted = 0;
-	currStep = 0;
+	if (!HAL_GPIO_ReadPin(GPIOA, DRV_EN_Pin)) {
+		if (!isHomeSet)
+			HAL_UART_Transmit(&huart1, (uint8_t*)&"HOME SET\r\n", 10, 100);
+		isHomeSet = 1;
+		currStep = 0;
+	}
 }
 
 
@@ -293,11 +307,11 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  TIM16->ARR = 800;
+  TIM16->ARR = 1000;
   isHomeSet = 0;
   isMotorStarted = 0;
 
-  HAL_UART_Transmit(&huart1, (uint8_t*)&"HELLO BLYAD\r\n", 13, 100);
+  HAL_UART_Transmit(&huart1, (uint8_t*)&"HELLO\r\n", 7, 100);
 
   rxDataLength = 0;
   HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
