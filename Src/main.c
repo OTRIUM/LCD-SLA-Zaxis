@@ -1,20 +1,18 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
+  ****************************************************************************************
   * @file           : main.c
   * @brief          : Main program body
-  ******************************************************************************
-  * @attention
+  * @version  		: V1.00
+  * @date     		: 14. February 2020
+  ****************************************************************************************
   *
-  * <h2><center>&copy; Copyright (c) 2020 STMicroelectronics.
-  * All rights reserved.</center></h2>
+  *	 	This fw controls stepper motor driver (TMC2208 in my case) via STEP/DIR
+  *		which is supposed to move Z-axis of DIY SLA 3D Printer based on Android phone.
+  *		G-Code is received from external BLE module by UART
+  *		Supported commands: M17, M18, G28, G1
   *
-  * This software component is licensed by ST under BSD 3-Clause license,
-  * the "License"; You may not use this file except in compliance with the
-  * License. You may obtain a copy of the License at:
-  *                        opensource.org/licenses/BSD-3-Clause
-  *
-  ******************************************************************************
+  ****************************************************************************************
   */
 /* USER CODE END Header */
 
@@ -97,6 +95,11 @@ static void MX_USART1_UART_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+void UART_SendString(char *data, uint8_t len) {
+	HAL_UART_Transmit(&huart1, (uint8_t*)data, len, 100);
+	HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, 100);
+}
+
 float str2float(uint8_t *buf) {													// String Parser
 	float result = 0;
 	uint32_t digit = 1, divRatio = 1;
@@ -108,7 +111,7 @@ float str2float(uint8_t *buf) {													// String Parser
 			digit *= 10;
 		}
 		else {
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"PARSE ERR\r\n", 11, 100);
+			UART_SendString("PARSE ERR", 9);
 			result = 1000;
 			divRatio = 1;
 			break;
@@ -119,20 +122,20 @@ float str2float(uint8_t *buf) {													// String Parser
 
 void M17_Handler(void) {														// Enable Steppers
 	__DRV_EN_ON;
-	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK M17\r\n", 8, 100);
+	UART_SendString("OK M17", 6);
 }
 
 void M18_Handler(void) {														// Disable Steppers
 	__DRV_EN_OFF;
 	isHomeSet = 0;
-	HAL_UART_Transmit(&huart1, (uint8_t*)&"OK M18\r\n", 8, 100);
+	UART_SendString("OK M18", 6);
 }
 
 void G28_Handler(void) {														// Move to Origin
 	if (!isMovingUpHome) {
 		isHomeSet = 0;
 		if (!HAL_GPIO_ReadPin(GPIOA, DRV_EN_Pin)) {
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"OK G28\r\n", 8, 100);
+			UART_SendString("OK G28", 6);
 			if (!HAL_GPIO_ReadPin(GPIOA, ENDSTOP_IN_Pin)) {
 				__DRV_DIR_UP;
 				dir = 1;
@@ -150,7 +153,7 @@ void G28_Handler(void) {														// Move to Origin
 			}
 		}
 		else
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"EN ERR\r\n", 8, 100);
+			UART_SendString("EN ERR", 6);
 	}
 	else {
 		__DRV_DIR_DOWN;
@@ -167,9 +170,9 @@ void G1_Handler(void) {															// Move Z
 		float z = str2float(rxBufUART);
 		uint32_t zInSteps = (z * STEPS_PER_MM);
 		if (zInSteps <= (ZMAX_MM * STEPS_PER_MM)) {
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"OK ", 3, 100);
+			HAL_UART_Transmit(&huart1, (uint8_t*)"OK ", 3, 100);
 			HAL_UART_Transmit(&huart1, rxBufUART, rxDataLength, 100);
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"\r\n", 2, 100);
+			HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, 100);
 			if (zInSteps > currStep) {
 				__DRV_DIR_UP;
 				dir = 1;
@@ -186,10 +189,10 @@ void G1_Handler(void) {															// Move Z
 			}
 		}
 		else if (z != 1000)
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"RNG ERR\r\n", 9, 100);
+			UART_SendString("RNG ERR", 7);
 	}
 	else
-		HAL_UART_Transmit(&huart1, (uint8_t*)&"HOME ERR\r\n", 10, 100);
+		UART_SendString("HOME ERR", 8);
 
 }
 
@@ -201,12 +204,14 @@ void UART_RxMessageHandler(void) {
 			M18_Handler();
 		else if (!strcmp("G28", (char*)&rxBufUART))
 			G28_Handler();
-		else HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG ERR\r\n", 9, 100);
+		else
+			UART_SendString("MSG ERR", 7);
 	}
 	else {
 		if (!strncmp("G1 Z", (char*)&rxBufUART, 4))
 			G1_Handler();
-		else HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG ERR\r\n", 9, 100);
+		else
+			UART_SendString("MSG ERR", 7);
 	}
 
 	for (uint8_t i=0; i<12; i++)
@@ -220,7 +225,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 			rxDataLength++;
 		}
 		else {
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG ERR\r\n", 9, 100);
+			UART_SendString("MSG ERR", 7);
 			rxDataLength = 0;
 		}
 		HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
@@ -235,7 +240,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 			UART_RxMessageHandler();
 		}
 		else
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"MSG ERR\r\n", 9, 100);
+			UART_SendString("MSG ERR", 7);
 		rxDataLength = 0;
 		HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
 	}
@@ -254,7 +259,7 @@ void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim) {				// TIM16 Ca
 		__MOTOR_STOP;
 		isMotorStarted = 0;
 		if (isHomeSet)
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"READY\r\n", 7, 100);
+			UART_SendString("READY", 5);
 		if (isMovingUpHome)
 			G28_Handler();
 	}
@@ -265,7 +270,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {								// EXTI1 IRQ Callback (Z
 	isMotorStarted = 0;
 	if (!HAL_GPIO_ReadPin(GPIOA, DRV_EN_Pin)) {
 		if (!isHomeSet)
-			HAL_UART_Transmit(&huart1, (uint8_t*)&"HOME SET\r\n", 10, 100);
+			UART_SendString("HOME SET", 8);
 		isHomeSet = 1;
 		currStep = 0;
 	}
@@ -311,7 +316,7 @@ int main(void)
   isHomeSet = 0;
   isMotorStarted = 0;
 
-  HAL_UART_Transmit(&huart1, (uint8_t*)&"HELLO\r\n", 7, 100);
+  UART_SendString("HELLO", 5);
 
   rxDataLength = 0;
   HAL_UART_Receive_IT(&huart1, (uint8_t*)&rxByteUART, 1);
